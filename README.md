@@ -10,7 +10,7 @@ aware super read overlap graph to extend super reads into haplotype aware contig
 
 
 ## Installation and dependencies
-Please note that phasebook is built for linux-based systems and python3 only.
+Please note that phasebook is built for linux-based systems only.
 phasebook relies on the following dependencies:
 - [whatshap](https://whatshap.readthedocs.io/en/latest/)
 - [minimap2](https://github.com/lh3/minimap2)
@@ -24,12 +24,13 @@ phasebook relies on the following dependencies:
 [MECAT2](https://github.com/xiaochuanle/MECAT2) 
 and [NECAT](https://github.com/xiaochuanle/NECAT)*
 - g++ >=5.5.0 and with boost libraries
+- python3
 
 To install phasebook, firstly, it is recommended to intall the dependencies through [Conda](https://docs.conda.io/en/latest/):
 ```
-conda create -n phasebook
+conda create -n phasebook python=3.7
 conda activate phasebook
-conda install -c bioconda whatshap=0.18 minimap2 longshot samtools bcftools racon fpa=0.5
+conda install -c bioconda whatshap=0.18 minimap2=2.18 longshot=0.4.1 samtools=1.12 bcftools=1.12 racon=1.4.20 fpa=0.5
 ```
 
 Subsequently, pull down the code to the directory where you want to install, and compile the code:
@@ -41,8 +42,18 @@ sh install.sh
 
 ## Running and options
 
-The input read file is only required and the format should be FASTA or FASTQ. Other parameters are optional.
-Please run `python phasebook.py -h` to get details of optional parameters setting. 
+The input read file is only required and the format should be FASTA or FASTQ. NOTE: each read per line in FASTA file, wrapped format is not allowed.
+Example:
+```
+>read1
+AACGGTACG
+>read2
+TATTAAGGC
+>read3
+AGGGCCGAATT
+```
+
+Other parameters are optional. Please run `python phasebook.py -h` to get details of optional parameters setting. 
 The final polished haplotype aware contigs are included in the `contigs.fa` file under output directory.
 
 Before running phasebook, please read through the following basic parameter settings, 
@@ -138,14 +149,17 @@ For large genomes or genomic regions assembly:
     python phasebook.py -i reads.fa -t 8 -p ont -g large -x 
 ```
 
+One could also run `phasebook` on HPC when handling with very large genomes, such as human genome. Please see the shell script `run_phasebook_on_hpc.sh` for the details.
+
+
 ## Possible issues during installation (optional)
 
 - If `g++` version of the system is not satisfied, one could try this to install:
 ```
 conda install -c conda-forge gxx_linux-64=7.3.0
 # replace the /path/to/ with your own path
-ln -s /path/to/miniconda3/envs/phasebook/bin/x86_64-conda-cos6-linux-gnu-g++ /path/to/miniconda3/envs/phasebook/bin/g++
-ln -s /path/to/miniconda3/envs/phasebook/bin/x86_64-conda-cos6-linux-gnu-gcc /path/to/miniconda3/envs/phasebook/bin/gcc
+ln -s /path/to/miniconda3/envs/phasebook/bin/x86_64-conda_cos6-linux-gnu-g++ /path/to/miniconda3/envs/phasebook/bin/g++
+ln -s /path/to/miniconda3/envs/phasebook/bin/x86_64-conda_cos6-linux-gnu-gcc /path/to/miniconda3/envs/phasebook/bin/gcc
 ```
 - If `boost` or `zlib` library is not installed, one could try this to install:
 ```
@@ -165,4 +179,10 @@ ln -s /path/to/miniconda3/envs/phasebook/lib/libz.* /path/to/miniconda3/envs/pha
 sh install.sh
 ```
 
+## TODO
+- Make pair-wise information be trackable in the final output. 
+Currently, the output of phasebook is a bag of contigs from both haplotypes. For super-reads themselves, we do have kept the pair-wise information being tracked in the intermediate super-read file. But for the final output, we are working on this to make pair-wise information be trackable in the final assemblies as well. 
+<!-- For example, compute a metric such as Jaccard index for each pair of final contig based on their common/unique super-reads(whether from the same haplotype or not) which contribute to both final contigs.-->
+
 ## Citation
+Luo, X., Kang, X. & Schönhuth, A. phasebook: haplotype-aware de novo assembly of diploid genomes from long reads. Genome Biol 22, 299 (2021). [Link](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-021-02512-x)

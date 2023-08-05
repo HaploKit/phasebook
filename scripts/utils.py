@@ -3,6 +3,7 @@ from multiprocessing import Pool
 import sys
 import os
 import copy
+import gzip
 
 from toolkits import fq_or_fa
 from mylog import Logger
@@ -60,19 +61,22 @@ def preprocess_fastx(infile, outdir, nsplit, qc, rename):
     pool = Pool(nsplit)
     to_end = False
     iter_num = 1
-    with open(infile) as fr:
-        while True:
-            params = []
-            for i in range(nsplit):
-                next_n_lines = list(islice(fr, n_lines))  # much faster than fr.readlines( n_lines)
-                if not next_n_lines:
-                    to_end = True
-                    break
-                param = (next_n_lines, str(i + 1), iter_num, r, fastx_files[i], qc, rename, mode)
-                params.append(param)
-            pool.map(process_read, params, chunksize=1)  # jobs are sorted
-            iter_num += 1
-            if to_end: break
+    if not infile.endswith('.gz'):
+        fr = open(infile,'r')
+    else:
+        fr = gzip.open(infile,'rt')
+    while True:
+        params = []
+        for i in range(nsplit):
+            next_n_lines = list(islice(fr, n_lines))  # much faster than fr.readlines( n_lines)
+            if not next_n_lines:
+                to_end = True
+                break
+            param = (next_n_lines, str(i + 1), iter_num, r, fastx_files[i], qc, rename, mode)
+            params.append(param)
+        pool.map(process_read, params, chunksize=1)  # jobs are sorted
+        iter_num += 1
+        if to_end: break
 
     pool.close()
     pool.join()
@@ -84,47 +88,54 @@ def compute_ovlp(fastx_i, fastx_j, outdir, threads, platform,genomesize, min_ovl
                  max_oh, oh_ratio):
     '''compute overlaps from a pair of fasta/fastq file
     & filter overlaps using fpa(cannot set overhang cutoff and cannot remove duplicated overlaps)
-    OR my own script?
+    OR my own script
     '''
     prefix_i = fastx_i.split('/')[-1].replace('.fa', '')
     prefix_j = fastx_j.split('/')[-1].replace('.fa', '')
     ovlp_file = "{}/2.overlap/{}_{}.paf".format(outdir, prefix_i, prefix_j)
     if genomesize=='small':
         if platform == 'pb' :
-            os.system("minimap2 -cx ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -t {} \
-                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
+            if os.system("minimap2 -cx ava-pb  -t {} \
+                        {}  {}  |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
                       .format(threads, fastx_i, fastx_j, min_ovlp_len, min_identity, ovlp_file)
-                      )
+                      ) != 0:
+                      raise RuntimeError("failed to compute the read overlaps")
+
         elif platform == 'hifi': # for HiFi reads, it seems no need to use -c, which largely speeds up.
-            os.system("minimap2 -cx ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -t {} \
-                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
+            if os.system("minimap2 -x ava-pb  -t {} \
+                        {}  {} |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
                       .format(threads, fastx_i, fastx_j, min_ovlp_len, min_identity, ovlp_file)
-                      )
+                      ) !=0:
+                      raise RuntimeError("failed to compute the read overlaps")
         elif platform == 'ont':# use cut -f 1-12 and then use fpa to prevent big RAM.
             print('ONT platform')
-            os.system("minimap2 -cx ava-ont -k15 -Xw5 -m100 -g10000 -r2000 --max-chain-skip 25  -t {} \
-                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
+            if os.system("minimap2 -cx ava-ont  -t {} \
+                        {}  {}  |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
                       .format(threads, fastx_i, fastx_j, min_ovlp_len, min_identity, ovlp_file)
-                      )
+                      )!=0:
+                      raise RuntimeError("failed to compute the read overlaps")
         else:
             raise Exception('Unvalid sequencing platform, please set one of them: pb/hifi/ont')
     else:
         if platform == 'pb' :
-            os.system("minimap2 -x ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -t {} \
-                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
+            if os.system("minimap2 -x ava-pb  -t {} \
+                        {}  {}  |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
                       .format(threads, fastx_i, fastx_j, min_ovlp_len, min_identity, ovlp_file)
-                      )
+                      )!=0:
+                      raise RuntimeError("failed to compute the read overlaps")
         elif platform == 'hifi': # for HiFi reads, it seems no need to use -c, which largely speeds up.
-            os.system("minimap2 -x ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -t {} \
-                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
+            if os.system("minimap2 -x ava-pb  -t {} \
+                        {}  {}  |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
                       .format(threads, fastx_i, fastx_j, min_ovlp_len, min_identity, ovlp_file)
-                      )
+                      ) !=0:
+                      raise RuntimeError("failed to compute the read overlaps")
         elif platform == 'ont':
             print('ONT platform')
-            os.system("minimap2 -x ava-ont -k15 -Xw5 -m100 -g10000 -r2000 --max-chain-skip 25  -t {} \
-                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
+            if os.system("minimap2 -x ava-ont  -t {} \
+                        {}  {}  |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
                       .format(threads, fastx_i, fastx_j, min_ovlp_len, min_identity, ovlp_file)
-                      )
+                      ) !=0:
+                      raise RuntimeError("failed to compute the read overlaps")
         else:
             raise Exception('Unvalid sequencing platform, please set one of them: pb/hifi/ont')
     return ovlp_file
@@ -138,10 +149,77 @@ def compute_ovlps(fastx_files, outdir, threads, platform,genomesize, min_ovlp_le
     '''
     ovlp_files = []
     # TODO: Minimap2 gives different result for different orders of input files.
-    # and different with combined input results, so need to add x1.fa_x2.fa & x2.fa_x1.fa
+    # and different with combined input results, so maybe need to add x1.fa_x2.fa & x2.fa_x1.fa
     # it seems splitting input files leads less overlaps
     for fastx_i, fastx_j in list(combinations(fastx_files, 2)) + [(f, f) for f in fastx_files]:
         ovlp_file = compute_ovlp(fastx_i, fastx_j, outdir, threads, platform, genomesize,min_ovlp_len, min_identity,
+                                 max_oh, oh_ratio)
+        ovlp_files.append(ovlp_file)
+    return ovlp_files
+
+
+def compute_ovlp_hpc(fastx_i, fastx_j, outdir, threads, platform,genomesize, min_ovlp_len, min_identity,
+                 max_oh, oh_ratio):
+    '''compute overlaps from a pair of fasta/fastq file
+    & filter overlaps using fpa(cannot set overhang cutoff and cannot remove duplicated overlaps)
+    OR my own script
+    '''
+    prefix_i = fastx_i.split('/')[-1].replace('.fa', '')
+    prefix_j = fastx_j.split('/')[-1].replace('.fa', '')
+    ovlp_file = "{}/2.overlap/{}_{}.paf".format(outdir, prefix_i, prefix_j)
+    fw=open("compute_overlaps_hpc.sh","a")
+    binpath="/prj/whatshap-denovo/software/miniconda3/bin/"
+    if genomesize=='small':
+        if platform == 'pb' :
+            fw.write("{}minimap2 -cx ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -t {} \
+                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |{}fpa drop -i -m  >{} \n"
+                      .format(binpath,threads, fastx_i, fastx_j, min_ovlp_len, min_identity, binpath,ovlp_file)
+                      )
+        elif platform == 'hifi': # for HiFi reads, it seems no need to use -c, which largely speeds up.
+            fw.write("{}minimap2 -x ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -t {} \
+                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |{}fpa drop -i -m  >{}\n"
+                      .format(binpath,threads, fastx_i, fastx_j, min_ovlp_len, min_identity, binpath,ovlp_file)
+                      )
+        elif platform == 'ont':# use cut -f 1-12 and then use fpa to prevent big RAM.
+            print('ONT platform')
+            fw.write("{}minimap2 -cx ava-ont -k15 -Xw5 -m100 -g10000 -r2000 --max-chain-skip 25  -t {} \
+                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |{}fpa drop -i -m  >{}\n"
+                      .format(binpath,threads, fastx_i, fastx_j, min_ovlp_len, min_identity,binpath, ovlp_file)
+                      )
+        else:
+            raise Exception('Unvalid sequencing platform, please set one of them: pb/hifi/ont')
+    else:
+        if platform == 'pb' :
+            fw.write("{}minimap2 -x ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -t {} \
+                        {}  {} 2>/dev/null |/usr/bin/cut -f 1-12 |/usr/bin/awk '$11>={} && $10/$11 >={} ' |{}fpa drop -i -m  >{}\n"
+                      .format(binpath,threads, fastx_i, fastx_j, min_ovlp_len, min_identity,binpath, ovlp_file)
+                      )
+        elif platform == 'hifi': # for HiFi reads, it seems no need to use -c, which largely speeds up.
+            fw.write("{}minimap2 -x ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -t {} \
+                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |{}fpa drop -i -m  >{}\n"
+                      .format(binpath,threads, fastx_i, fastx_j, min_ovlp_len, min_identity, binpath,ovlp_file)
+                      )
+        elif platform == 'ont':
+            print('ONT platform')
+            fw.write("{}minimap2 -x ava-ont -k15 -Xw5 -m100 -g10000 -r2000 --max-chain-skip 25  -t {} \
+                        {}  {} 2>/dev/null |cut -f 1-12 |awk '$11>={} && $10/$11 >={} ' |{}fpa drop -i -m  >{}\n"
+                      .format(binpath,threads, fastx_i, fastx_j, min_ovlp_len, min_identity, binpath,ovlp_file)
+                      )
+        else:
+            raise Exception('Unvalid sequencing platform, please set one of them: pb/hifi/ont')
+    return ovlp_file
+
+
+def compute_ovlps_hpc(fastx_files, outdir, threads, platform,genomesize, min_ovlp_len, min_identity,
+                  max_oh, oh_ratio):
+    '''
+    compute overlaps from splitted fasta/fastq file list
+
+    '''
+    ovlp_files = []
+    open("compute_overlaps_hpc.sh","w").close()
+    for fastx_i, fastx_j in list(combinations(fastx_files, 2)) + [(f, f) for f in fastx_files]:
+        ovlp_file = compute_ovlp_hpc(fastx_i, fastx_j, outdir, threads, platform, genomesize,min_ovlp_len, min_identity,
                                  max_oh, oh_ratio)
         ovlp_files.append(ovlp_file)
     return ovlp_files
@@ -256,7 +334,7 @@ def split_infiles_by_cluster(fastx_files, ovlp_files, clusters_file, outdir, thr
                 if not read_item:
                     break
                 num_reads += 1
-                read = read_item[0][1:].strip()
+                read = read_item[0].strip().split()[0][1:]
                 if read in read2clusters:
                     for cluster_id in set(read2clusters[read].split()):
                         if cluster_id in cluster2fa:

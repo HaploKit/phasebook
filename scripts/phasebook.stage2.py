@@ -89,7 +89,7 @@ def main():
                         help="choose to (0) keep all edges, (1) remove transitive edges, (2) to remove double transitive edges")
     parser.add_argument('--trim_ends', dest='trim_ends', type=ast.literal_eval, required=False, default=False,
                         help="trim the erroneous bases in both ends, should be either True or False")
-    parser.add_argument('--rename', dest='rename', type=ast.literal_eval, required=False, default=True,
+    parser.add_argument('--rename', dest='rename', type=ast.literal_eval, required=False, default=False,
                         help="rename read name or not, should be either True or False")
     parser.add_argument('--qc', dest='qc', type=ast.literal_eval, required=False, default=False,
                         help="quality control for input reads or not, should be either True or False, TODO")
@@ -257,6 +257,7 @@ def main():
             raise Exception('invalid setting for --platform')
     else:
         pass
+    """
 
     log.logger.info('splitting input fastx file into {} subfiles...'.format(args.nsplit))
     os.system("rm -rf {}/1.split_fastx".format(args.outdir))
@@ -282,9 +283,9 @@ def main():
                                    args.min_identity, args.max_oh, args.oh_ratio)
 
     log.logger.info('computing overlaps finished.\n')
-    # log.logger.info('sorting overlaps by overlap length and matched length...') 
-    # os.system("sort -k 11 -k 10 -nr -S {} --parallel {} {} -o {}".
-    #           format(args.max_memory, args.threads, ovlp_files[0], ovlp_files[0]))
+    log.logger.info('sorting overlaps by overlap length and matched length...')
+    os.system("sort -k 11 -k 10 -nr -S {} --parallel {} {} -o {}".
+              format(args.max_memory, args.threads, ovlp_files[0], ovlp_files[0]))
 
     log.logger.info('clustering reads...')
     # clusters_file = cluster_reads(ovlp_files, args.outdir, args.sort_by_len, args.min_cluster_size, args.level)
@@ -321,7 +322,8 @@ def main():
               format(args.outdir, all_supereads_fa))
 
     log.logger.info('stage1 assembly has been finished.')
-
+    """
+    all_supereads_fa = "{}/all.supereads.fa".format(args.outdir)
     # do super reads assembly
     if args.ctg_asm == 'iter':  # assemble super reads iteratively
         log.logger.info('Using {} method for super reads assembly...'.format(args.ctg_asm))
@@ -337,7 +339,7 @@ def main():
                                                          args.sp_min_identity, args.sp_oh, args.sp_ohratio,
                                                          args.max_tip_len, args.ctg_asm,
                                                          args.max_het_snps, args.min_allele_cov, args.platform,
-                                                         args.rm_tmp, args.super_ovlp_fast)
+                                                         args.rm_tmp,args.super_ovlp_fast)
 
         if args.n_final_polish > 0:
             log.logger.info('Polishing final contigs for {} times...'.format(args.n_final_polish))

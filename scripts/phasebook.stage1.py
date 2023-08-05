@@ -89,7 +89,7 @@ def main():
                         help="choose to (0) keep all edges, (1) remove transitive edges, (2) to remove double transitive edges")
     parser.add_argument('--trim_ends', dest='trim_ends', type=ast.literal_eval, required=False, default=False,
                         help="trim the erroneous bases in both ends, should be either True or False")
-    parser.add_argument('--rename', dest='rename', type=ast.literal_eval, required=False, default=True,
+    parser.add_argument('--rename', dest='rename', type=ast.literal_eval, required=False, default=False,
                         help="rename read name or not, should be either True or False")
     parser.add_argument('--qc', dest='qc', type=ast.literal_eval, required=False, default=False,
                         help="quality control for input reads or not, should be either True or False, TODO")
@@ -322,6 +322,8 @@ def main():
 
     log.logger.info('stage1 assembly has been finished.')
 
+    sys.exit(0)
+    
     # do super reads assembly
     if args.ctg_asm == 'iter':  # assemble super reads iteratively
         log.logger.info('Using {} method for super reads assembly...'.format(args.ctg_asm))

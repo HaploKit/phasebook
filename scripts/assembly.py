@@ -101,14 +101,14 @@ def longest_path(G):
     return path
 
 
-def assemble_raw_reads(id, fasta, paf, outdir, max_tip_len, rm_trans):
+def assemble_raw_reads(id, fasta, paf, outdir, max_tip_len, rm_trans,binpath=""):
     # rename reads id, but this is not necessary when debug finished
     fasta2 = outdir + '/' + str(id) + '.renamed.fa'
     paf2 = outdir + '/' + str(id) + '.renamed.paf'
     id_map_file = rename_fa(fasta, fasta2, outdir)
     rename_paf(paf, paf2, id_map_file)
     digraph_file = ovlp2graph(fasta2, paf2, rm_trans, threads=1, remove_inclusions='false', rm_tips='true',
-                              min_read_len=0, max_tip_len=max_tip_len)
+                              min_read_len=0, max_tip_len=max_tip_len,binpath=binpath)
     ovlp2record = read_paf(paf2)
     read2seq = get_read2seq(fasta2, 'fasta')
     G = construct_digraph(digraph_file)
@@ -122,7 +122,7 @@ def get_superead(param):
     '''
     get the super reads for a cluster
     '''
-    [i, outdir, type, min_cov, max_tip_len, n_correct, n_polish, rm_trans, trim_ends, polish_tool, rm_tmp,correct_mode] = param
+    [i, outdir, type, min_cov, max_tip_len, n_correct, n_polish, rm_trans, trim_ends, polish_tool, rm_tmp,correct_mode, binpath] = param
     i = str(i)
     outdir = outdir + '/c' + i
 
@@ -137,21 +137,21 @@ def get_superead(param):
         return
 
     # get ad-hoc reference for calling variants
-    ref = assemble_raw_reads(i, fasta, paf, outdir, max_tip_len, rm_trans)
+    ref = assemble_raw_reads(i, fasta, paf, outdir, max_tip_len, rm_trans,binpath)
 
     # polish ad-hoc reference, which can improve phasing performance
     ref = polish_seq(i, ref, fasta, outdir, rounds=1, type=type,
-                     polish_tool=polish_tool)  # TODO: necessary when HiFi ??
+                     polish_tool=polish_tool,binpath=binpath)  # TODO: necessary when HiFi ??
 
     # get bam
-    bam = get_bam(i, ref, fasta, outdir, type)
+    bam = get_bam(i, ref, fasta, outdir, type,binpath)
 
     # get vcf
     clog.logger.info("cluster:{} variant calling started...".format(i))
-    vcf = call_variant(i, bam, ref, outdir, caller="longshot")
+    vcf = call_variant(i, bam, ref, outdir, "longshot",binpath)
 
     clog.logger.info("cluster:{} reads phasing started...".format(i))
-    hap2reads = phase_reads(i, vcf, bam, ref, outdir, add_unphased=True)
+    hap2reads = phase_reads(i, vcf, bam, ref, outdir, True,binpath)
 
     read2seq = get_read2seq(fasta, mode='fasta')
     ovlp2record = read_paf(paf)
@@ -184,21 +184,22 @@ def get_superead(param):
                 clog.logger.warning("{} does not exist or is empty, skipping super read: c_{}_{}".format(paf, i, hap))
                 continue
 
-            hap_ref = assemble_raw_reads(i, hap_fasta, hap_paf, hap_outdir, max_tip_len, rm_trans)
+            hap_ref = assemble_raw_reads(i, hap_fasta, hap_paf, hap_outdir, max_tip_len, rm_trans,binpath)
 
             # use raw reads to polish for one time, which to avoid possible bugs(large indel) caused by consent
             # when self correcting reads for multiple times.
             if n_correct > 0:
-                hap_ref = polish_seq(i, hap_ref, hap_fasta, hap_outdir, rounds=1, type=type, polish_tool=polish_tool)
+                hap_ref = polish_seq(i, hap_ref, hap_fasta, hap_outdir, rounds=1, type=type, polish_tool=polish_tool,binpath=binpath)
                 corrected_fa = correct_error_reads(i, hap_outdir, rounds=n_correct, type=type,correct_mode=correct_mode)
                 polished_fa = polish_seq(i, hap_ref, corrected_fa, hap_outdir, rounds=n_polish, type=type,
-                                         polish_tool=polish_tool)
-                trimmed_fa = scan_seq_by_depth(i, hap, polished_fa, corrected_fa, hap_outdir, min_cov, type, trim_ends)
+                                         polish_tool=polish_tool,binpath=binpath)
+                trimmed_fa = scan_seq_by_depth(i, hap, polished_fa, corrected_fa, hap_outdir, min_cov, type, trim_ends,binpath)
+                
             else:
                 polished_fa = polish_seq(i, hap_ref, hap_fasta, hap_outdir, rounds=n_polish, type=type,
-                                         polish_tool=polish_tool)
+                                         polish_tool=polish_tool,binpath=binpath)
                 # polished_fa = polish_seq(i, hap_ref, hap_fasta_raw, hap_outdir, rounds=n_polish, type=type)
-                trimmed_fa = scan_seq_by_depth(i, hap, polished_fa, hap_fasta, hap_outdir, min_cov, type, trim_ends)
+                trimmed_fa = scan_seq_by_depth(i, hap, polished_fa, hap_fasta, hap_outdir, min_cov, type, trim_ends,binpath)
                 os.system("ln -fs {}.fa {}/{}.corrected.fa".format(i,hap_outdir,i))
     clog.logger.info("cluster:{} super read construction finished.".format(i))
     clog.logger.info("cluster:{} super read files are:{}/{}.hap*.supereads.fa".format(i, outdir, i))
@@ -218,24 +219,27 @@ def get_superead(param):
 ################ For SuperReads Assembly #############
 ######################################################
 
-def cal_supereads_overlap(fasta, outdir, threads, min_ovlp_len, min_identity, o, r):
+def cal_supereads_overlap(fasta, outdir, threads, min_ovlp_len, min_identity, o, r, super_ovlp_fast):
     '''
     calculate the overlaps of supereads
     '''
     paf = outdir + '/supereads.tmp.paf'
     filtered_paf = outdir + '/supereads.paf'
-    # run minimap2, no cigar,step is much less computation cost.
-    # TODO: still use minimap2 to calculate overlaps??
+    if super_ovlp_fast:
+        os.system("minimap2 -x ava-ont --end-bonus 100 -t {} \
+                        {}  {} 2>/dev/null|awk '$11>={} && $10/$11 >={} ' |fpa drop -i -m  >{}"
+                      .format(threads, fasta, fasta, min_ovlp_len, min_identity, filtered_paf)
+                      )
+    else:
+        filter_inline = 'python ' + sys.path[0] + '/filter_ovlp_inline.py {} {} {} {} '. \
+            format(min_ovlp_len, min_identity, o, r)
+        minimap = "minimap2 -cx ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 --end-bonus 100  " + \
+                "-t %s %s %s |cut -f 1-12| %s >%s" % (threads, fasta, fasta, filter_inline, paf)
 
-    filter_inline = 'python ' + sys.path[0] + '/filter_ovlp_inline.py {} {} {} {} '. \
-        format(min_ovlp_len, min_identity, o, r)
-    minimap = "minimap2 -cx ava-pb -Hk19 -Xw5 -m100 -g10000 --max-chain-skip 25 -c --end-bonus 100  " + \
-              "-t %s %s %s |cut -f 1-12| %s >%s" % (threads, fasta, fasta, filter_inline, paf)
-
-    os.system(minimap)
-    #remove overlaps which are out of the max_ovlps limit
-    # rm_extra_ovlps(paf, filtered_paf,max_ovlps=50, rm_extra_ovlps=True)
-    rm_extra_ovlps(paf, filtered_paf,max_ovlps=10, rm_extra_ovlps=True) #TODO: max_ovlps = ?
+        os.system(minimap)
+        #remove overlaps which are out of the max_ovlps limit
+        # rm_extra_ovlps(paf, filtered_paf,max_ovlps=50, rm_extra_ovlps=True)
+        rm_extra_ovlps(paf, filtered_paf,max_ovlps=10, rm_extra_ovlps=True) #TODO: max_ovlps = ?
     if os.path.getsize(filtered_paf)==0:
         os.system('cp {} {}/../contigs.fa'.format(fasta, outdir))
         print('No satisfied overlap found between super reads, program finished.')
@@ -294,11 +298,11 @@ def identify_utg_paths(G):
 
 
 def assemble_supereads(fasta, outdir, threads, min_read_len, min_ovlp_len, min_identity, o, r,
-                       max_tip_len, method, max_het_snps, min_allele_cov, type, rm_tmp):
+                       max_tip_len, method, max_het_snps, min_allele_cov, type, rm_tmp, super_ovlp_fast):
     fasta2, paf = None, None
 
     if method == 'rb':
-        paf = cal_supereads_overlap(fasta, outdir, threads, min_ovlp_len, min_identity, o, r)
+        paf = cal_supereads_overlap(fasta, outdir, threads, min_ovlp_len, min_identity, o, r, super_ovlp_fast)
         paf = filter_ovlp_based_on_reads_parallel(paf, outdir, threads, max_het_snps, min_allele_cov, type)
 
         fasta2 = outdir + '/supereads.renamed.fa'
@@ -311,12 +315,12 @@ def assemble_supereads(fasta, outdir, threads, min_read_len, min_ovlp_len, min_i
     elif method == 'naive':
         fasta2 = outdir + '/supereads.renamed.fa'
         rename_fa(fasta, fasta2, outdir, min_read_len)
-        paf = cal_supereads_overlap(fasta2, outdir, threads, min_ovlp_len, min_identity, o, r)
+        paf = cal_supereads_overlap(fasta2, outdir, threads, min_ovlp_len, min_identity, o, r, super_ovlp_fast)
     else:
         raise Exception('Warning: check the method for contig assembly.')
 
     digraph_file = ovlp2graph(fasta2, paf, rm_trans=1, threads=threads, remove_inclusions='true', rm_tips='true',
-                              min_read_len=min_read_len, max_tip_len=max_tip_len)
+                              min_read_len=min_read_len, max_tip_len=max_tip_len,binpath="")
     ovlp2record = read_paf(paf)
     read2seq = get_read2seq(fasta2, 'fasta')
     G = construct_digraph(digraph_file)
